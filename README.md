@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/whalewhis-lockup-dark.svg?v=2">
-    <img src="docs/assets/whalewhis-lockup-light.svg?v=2" alt="WhaleWhis" width="760">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/whalewhis-two-w-dark.svg">
+    <img src="docs/assets/whalewhis-two-w-light.svg" alt="WhaleWhis" width="760">
   </picture>
 </p>
 
