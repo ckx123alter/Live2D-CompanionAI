@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://whalewhis.xunzhenfuture.tech/"><strong>在线试用 →</strong></a>
   &nbsp; · &nbsp;
-  <a href="#1-下载项目">下载并在本地运行</a>
+  <a href="#1-下载项目">下载项目</a>
 </p>
 
 <p align="center">
