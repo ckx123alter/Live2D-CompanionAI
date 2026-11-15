@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env*
+!.env.example
+*.log
+.venv/
+__pycache__/
+.uv-cache/
+.vite/
+.pytest_cache/
+*.pyc
+data/
+*.sqlite3*
+# The supplied model cannot be redistributed as part of an open-source repo.
+frontend/public/model/*
+!frontend/public/model/.gitkeep
+frontend/public/vendor/
+# Include MP3 background music and its credits.
+frontend/public/audio/*
+!frontend/public/audio/README.md
+!frontend/public/audio/*.mp3
+*-preview.png
+*-fixed.png
+preview.png
+.DS_Store
+Thumbs.db

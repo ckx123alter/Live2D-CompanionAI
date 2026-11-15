@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 260" role="img" aria-labelledby="title">
+  <title id="title">WhaleWhis</title>
+  <text x="67" y="177" fill="#25252d" font-family="Georgia, 'Times New Roman', serif" font-size="150" font-style="italic" textLength="510" lengthAdjust="spacingAndGlyphs">Whale</text>
+  <text x="587" y="177" fill="#25252d" font-family="Georgia, 'Times New Roman', serif" font-size="150" font-style="italic" font-weight="bold" textLength="438" lengthAdjust="spacingAndGlyphs">Whis</text>
+  <path d="M 114,208 C 290,236 486,236 660,212" fill="none" stroke="#528d9d" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="1035" cy="66" r="10" fill="#528d9d"/>
+  <circle cx="1056" cy="47" r="4" fill="#528d9d" opacity="0.6"/>
+</svg>

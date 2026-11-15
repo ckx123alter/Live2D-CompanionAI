@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.cmd text eol=crlf
+# Preserve the author's original notice byte-for-byte.
+MODEL-NOTICE.txt -text

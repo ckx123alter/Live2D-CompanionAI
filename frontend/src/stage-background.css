@@ -1,0 +1,57 @@
+.stage-sky {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+.sky-halo {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 55% 57%, #3c5d942b 0%, #26395b12 30%, transparent 62%),
+    radial-gradient(ellipse at 68% 72%, #66528216 0%, transparent 48%);
+}
+.cetus-constellation {
+  position: absolute;
+  left: 50%;
+  top: 49%;
+  transform: translate(-50%, -50%);
+  width: 92%;
+  height: auto;
+  max-width: 860px;
+  overflow: visible;
+}
+.cetus-lines polyline {
+  stroke: #788ba8;
+  stroke-width: .8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-opacity: .25;
+  vector-effect: non-scaling-stroke;
+}
+.cetus-stars { fill: #c2d8ed; opacity: .48; }
+.cetus-glows { fill: #9abce0; opacity: .07; }
+.sky-stars { position: absolute; inset: 0; }
+.sky-star {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--size);
+  height: var(--size);
+  border-radius: 50%;
+  background: #c2d8ed;
+  opacity: .28;
+}
+.sky-star.twinkle {
+  animation: sky-twinkle var(--duration) ease-in-out var(--delay) infinite;
+}
+@keyframes sky-twinkle { 0%,100% { opacity: .18; } 50% { opacity: .52; } }
+@media (max-width: 700px) {
+  .cetus-constellation { top: 48%; width: 94%; max-width: 480px; }
+  .sky-star:nth-child(2n) { display: none; }
+  .sky-halo { opacity: .8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sky-star.twinkle { animation: none; opacity: .3; }
+}
