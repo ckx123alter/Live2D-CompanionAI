@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://whalewhis.xunzhenfuture.tech/"><strong>在线试用 →</strong></a>
+  <a href="https://whalewhis.xunzhenfuture.tech/"><strong>在线试用</strong></a>
   &nbsp; · &nbsp;
   <a href="#1-下载项目">下载项目</a>
 </p>
