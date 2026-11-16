@@ -31,7 +31,14 @@
 
 ## 1. 下载项目
 
-在 [GitHub 仓库](https://github.com/ckx123alter/Live2D-CompanionAI) 点击 **Code → Download ZIP**，解压后进入包含 `run.cmd` 的文件夹。后续命令均在这个文件夹中执行。
+安装 [Git](https://git-scm.com/downloads) 后，在终端下载项目：
+
+```bash
+git clone https://github.com/ckx123alter/Live2D-CompanionAI.git
+cd Live2D-CompanionAI
+```
+
+不使用 Git 也可以在 [GitHub 仓库](https://github.com/ckx123alter/Live2D-CompanionAI) 点击 **Code → Download ZIP**，解压后进入项目文件夹。
 
 安装 [Python 3.11+](https://www.python.org/downloads/) 和 [Node.js 22](https://nodejs.org/en/download)。Windows 安装 Python 时勾选 **Add python.exe to PATH**。
 
