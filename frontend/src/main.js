@@ -19,12 +19,13 @@ import { createEyeLocator, gazeTarget } from './gaze.js';
 import { hitsModel, tapRegion, tapPose } from './interaction.js';
 import * as PIXI from 'pixi.js';
 import { modelProfile } from './model-profile.js';
-import { PencilLine, Trash2 } from 'lucide';
+import { PencilLine, Trash2, LoaderCircle } from 'lucide';
 import { createIcons, ArrowUpRight, Send, Volume2, VolumeX, Settings2, Download, Eraser, RotateCcw, Maximize, Minimize, Plus, Minus, X, Sparkles, Mic, MessageCircle, SlidersHorizontal, Check, ChevronRight, Smile, Heart, Frown, CircleHelp, Laugh, Cloud, Ellipsis, Hand, Pointer, Wheat, UserRound, Glasses, Circle, ArrowDownRight, CookingPot, Droplets, Annoyed } from 'lucide';
 
 const iconSet = { ArrowUpRight, Send, Volume2, VolumeX, Settings2, Download, Eraser, RotateCcw, Maximize, Minimize, Plus, Minus, X, Sparkles, Mic, MessageCircle, SlidersHorizontal, Check, ChevronRight, Smile, Heart, Frown, CircleHelp, Laugh, Cloud, Ellipsis, Hand, Pointer, Wheat, UserRound, Glasses, Circle, ArrowDownRight, CookingPot, Droplets, Annoyed };
 iconSet.PencilLine=PencilLine;
 iconSet.Trash2=Trash2;
+iconSet.LoaderCircle=LoaderCircle;
 const icons = () => createIcons({ icons: iconSet, attrs: { 'stroke-width': 1.6, 'aria-hidden': 'true', focusable: 'false' } });
 const facePaths={
   goofy:'<circle cx="12" cy="12" r="9"/><circle cx="8" cy="9" r="1.8"/><circle cx="16" cy="9" r="1.8"/><path d="M6 14q6 7 12 0H6Zm4 0v3h4v-3m-2 0v3"/>',
