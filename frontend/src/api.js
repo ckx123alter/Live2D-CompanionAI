@@ -31,6 +31,7 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
     });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
+    if (error.name === 'TimeoutError') throw new ApiError('请求超时，请稍后重试。', 0, 'request_timeout');
     throw new ApiError('无法连接后端，请检查服务是否启动。', 0);
   }
   if (!response.ok) {

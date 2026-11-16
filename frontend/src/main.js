@@ -1,4 +1,4 @@
-import { createDrawingState } from './drawing-state.js';
+import { createDrawingState, drawingSaveErrorMessage } from './drawing-state.js';
 import './style.css';
 import { api, setUserKeys, clearUserKeys, keyStatus } from './api.js';
 import { drawingBoardMarkup, createDrawingBoard } from './drawing-board.js';
@@ -610,7 +610,11 @@ const drawingBoard=createDrawingBoard($('#drawing-view'),{
 });
 drawingState=createDrawingState({api,snapshot:()=>drawingBoard.snapshot(),
   restore:state=>drawingBoard.restore(state),canSave:()=>Boolean(backend)&&serviceReady&&!busy,
-  onError:error=>{if(error.status===409)toast('游戏进度已同步，请重试刚才的操作');else toast('画板暂未保存，连接恢复后会重试');}});
+  onError:error=>{
+    toast(drawingSaveErrorMessage(error));
+    if(error.status===401){serviceReady=false;showService();$('#reconnect').hidden=false;}
+  }});
+window.addEventListener('online',()=>drawingState.retry(),{signal:idleEvents.signal});
 window.addEventListener('pagehide',()=>{if(backend)drawingState.flush().catch(()=>{});});
 let drawingOpen=false, drawingAnimation=null, drawingPositionFrame=0;
 function positionDrawing() {
