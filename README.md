@@ -12,11 +12,18 @@
   在自己的电脑上，和会回应你的 Live2D 伙伴聊聊天。
 </p>
 
+
+
+https://github.com/user-attachments/assets/80e464b3-bad7-4533-83a9-4485bc2c0ab1
+
+
 <p align="center">
   <a href="https://whalewhis.xunzhenfuture.tech/"><strong>在线试用</strong></a>
   &nbsp; · &nbsp;
   <a href="#1-下载项目">下载项目</a>
 </p>
+
+
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-007ec6" alt="License: MIT"></a>
