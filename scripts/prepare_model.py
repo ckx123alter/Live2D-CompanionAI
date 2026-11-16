@@ -1,7 +1,10 @@
 """Prepare application-specific indexes on a locally supplied model copy."""
 import argparse
+import copy
 import json
 from pathlib import Path
+
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 MOTIONS = {
@@ -12,6 +15,27 @@ MOTIONS = {
     'RestGrass': '狗尾草切回默认手',
     'RestPoint': '竖手指切回默认',
 }
+
+
+def prepare_mobile(directory, data):
+    """Downsample before download/decode, preserving the original atlas and UVs."""
+    mobile = copy.deepcopy(data)
+    textures = []
+    for index, relative in enumerate(data['FileReferences']['Textures']):
+        source = directory / relative
+        target = directory / 'mobile-2048' / f'texture_{index:02d}.png'
+        target.parent.mkdir(exist_ok=True)
+        if not target.exists() or target.stat().st_mtime_ns < source.stat().st_mtime_ns:
+            # Process atlases sequentially so preparing the model also has a bounded peak.
+            with Image.open(source) as atlas:
+                atlas.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+                atlas.save(target, format='PNG')
+        textures.append(target.relative_to(directory).as_posix())
+    mobile['FileReferences']['Textures'] = textures
+    entry = directory / '大肥鱼.mobile.model3.json'
+    content = json.dumps(mobile, ensure_ascii=False, indent=2) + '\n'
+    if not entry.exists() or entry.read_text(encoding='utf-8') != content:
+        entry.write_text(content, encoding='utf-8')
 
 
 def prepare(directory: Path, check=False):
@@ -37,6 +61,7 @@ def prepare(directory: Path, check=False):
         for name, motion in motion_data.items():
             motion.setdefault('Meta', {})['Loop'] = False
             (directory / name).write_text(json.dumps(motion, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+        prepare_mobile(directory, data)
     print('Model resources checked.' if check else 'Model indexes prepared; hand motions set to non-looping.')
 
 

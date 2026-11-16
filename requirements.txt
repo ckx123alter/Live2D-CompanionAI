@@ -4,3 +4,4 @@ httpx>=0.28,<0.29
 pydantic>=2.10,<3
 pydantic-settings>=2.7,<3
 python-dotenv>=1,<2
+Pillow>=11,<13

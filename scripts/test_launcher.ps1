@@ -4,7 +4,7 @@ $body = ($source -split '(?m)^# POWERSHELL_PAYLOAD\r?$',2)[1]
 $errors = $null; $tokens = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseInput($body, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Invoke-Checked','Initialize-LocalEnvironment')) {
+foreach ($name in @('Invoke-Checked','Get-FileDigest','Initialize-LocalEnvironment')) {
     $fn = $ast.FindAll({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst]}, $true) | Where-Object Name -eq $name
     Invoke-Expression $fn.Extent.Text
 }
@@ -25,11 +25,16 @@ try {
     Set-Content (Join-Path $frontendPath 'package-lock.json') '{}'
     Set-Content (Join-Path $projectPath '.env.example') 'demo defaults'
     Set-Content (Join-Path $projectPath '.env') 'existing configuration'
-    $script:calls = @(); $script:failPip = $false
+    $script:calls = @(); $script:failPip = $false; $script:hasPip = $false; $script:failEnsurePip = $false
     function Get-Command { param($Name,$ErrorAction) return @{Source=$Name} }
+    function Test-PipAvailable { return $script:hasPip }
     # Simulate installers; never install packages or start application services.
     function Invoke-Checked([string]$Executable,[string[]]$Arguments) {
         $script:calls += ($Arguments -join '|')
+        if ($Arguments -contains 'ensurepip') {
+            if ($script:failEnsurePip) { throw 'simulated pip bootstrap failure' }
+            $script:hasPip = $true
+        }
         if ($Arguments -contains 'venv') {
             New-Item -ItemType Directory -Path (Split-Path $pythonPath) -Force | Out-Null
             Set-Content $pythonPath 'mock'
@@ -41,12 +46,19 @@ try {
         }
     }
     Initialize-LocalEnvironment
+    if (@($calls | Where-Object { $_ -match '\|ensurepip\|' }).Count -ne 1) { throw 'Missing pip was not restored' }
     if (@($calls | Where-Object { $_ -match '\|pip\|' }).Count -ne 1) { throw 'First pip install missing' }
     if (@($calls | Where-Object { $_ -match '\|ci$' }).Count -ne 1) { throw 'First npm install missing' }
     if ((Get-Content (Join-Path $projectPath '.env') -Raw).Trim() -ne 'existing configuration') { throw 'Existing configuration changed' }
     $script:calls = @()
     Initialize-LocalEnvironment
-    if (@($calls | Where-Object { $_ -match '\|pip\||\|ci$|\|venv\|' }).Count) { throw 'Unchanged dependencies reinstalled' }
+    if (@($calls | Where-Object { $_ -match '\|pip\||\|ensurepip\||\|ci$|\|venv\|' }).Count) { throw 'Unchanged dependencies reinstalled' }
+    $script:hasPip = $false; $script:failEnsurePip = $true; $failed = $false
+    try { Initialize-LocalEnvironment } catch { $failed = $true }
+    if (!$failed) { throw 'Failed pip bootstrap was ignored' }
+    $script:failEnsurePip = $false
+    Initialize-LocalEnvironment
+    if (!$script:hasPip) { throw 'Existing environment pip repair missing' }
     $stamp = Join-Path $projectPath '.venv\whale-requirements.sha256'
     $oldStamp = Get-Content $stamp -Raw
     Set-Content (Join-Path $projectPath 'requirements.txt') 'requirements-v2'
@@ -59,7 +71,7 @@ try {
     Remove-Item -LiteralPath (Join-Path $projectPath '.env')
     Initialize-LocalEnvironment
     if ((Get-Content (Join-Path $projectPath '.env') -Raw).Trim() -ne 'demo defaults') { throw 'Missing default configuration' }
-    Write-Output 'PASS: syntax, command failure, fresh setup, unchanged restart, .env preservation/defaults, failed-install retry, paths with spaces.'
+    Write-Output 'PASS: syntax, command failure, fresh setup, missing-pip repair/retry, unchanged restart, .env preservation/defaults, failed-install retry, paths with spaces.'
 } finally {
     $resolved = (Resolve-Path -LiteralPath $fixture).Path
     if ((Split-Path $resolved -Parent) -ne (Resolve-Path -LiteralPath $env:TEMP).Path -or (Split-Path $resolved -Leaf) -notlike 'whale-launcher-test-*') { throw 'Unexpected cleanup path' }

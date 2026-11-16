@@ -1,5 +1,6 @@
 import base64
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
@@ -15,6 +16,12 @@ from .speech_text import doubao_ssml
 
 class ProviderError(Exception):
     """Only a sanitized message may cross the API boundary."""
+
+    def __init__(self, message, *, retry_safe=False):
+        super().__init__(message)
+        # Only an explicit upstream rejection permits another manual submission.
+        # Timeouts, broken streams and ambiguous server errors keep their claim.
+        self.retry_safe = retry_safe
 
 
 class ChatProvider(Protocol):
@@ -49,6 +56,7 @@ game_answer_correct 为 true、false 或 null，仅用于角色已画好、用�
 """
 
 
+@lru_cache(maxsize=1)
 def load_system_prompt() -> str:
     character = CHARACTER_PATH.read_text(encoding="utf-8").strip()
     if not character:
@@ -130,7 +138,18 @@ class OpenAIChat:
         except httpx.TimeoutException as error:
             raise ProviderError("对话服务超时，请重试。") from error
         except httpx.HTTPStatusError as error:
-            raise ProviderError("对话服务请求失败，请检查后端的接口、密钥和额度。") from error
+            status = error.response.status_code
+            detail = {
+                400: "请求格式被拒绝，请联系维护者检查接口配置。",
+                401: "对话 Key 无效或已失效，请检查填写的对话 Key。",
+                402: "对话服务余额不足，请检查 API 账户余额。",
+                403: "对话服务拒绝访问，请检查 Key 的权限。",
+                404: "对话接口或模型不存在，请联系维护者检查配置。",
+                422: "请求参数不被支持，请联系维护者检查模型配置。",
+                429: "对话服务请求过于频繁，请稍后重试。",
+            }.get(status, "对话服务暂时异常，结果未能确认，请稍后再试。")
+            raise ProviderError(f"{detail}（HTTP {status}）",
+                                retry_safe=status in {400,401,402,403,404,422,429}) from error
         except (httpx.RequestError, KeyError, IndexError, ValueError, TypeError) as error:
             raise ProviderError("无法读取对话服务的回复，请检查后端配置。") from error
 
@@ -157,7 +176,11 @@ class OpenAISpeech:
                 return bytes(audio)
         except httpx.TimeoutException as error:
             raise ProviderError("语音合成超时，请稍后点击朗读重试。") from error
-        except (httpx.RequestError, httpx.HTTPStatusError) as error:
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            raise ProviderError(f"语音服务拒绝请求（HTTP {status}），请检查接口、密钥和额度后点击朗读重试。",
+                                retry_safe=status in {400,401,403,404,422,429}) from error
+        except httpx.RequestError as error:
             raise ProviderError("语音合成失败，请检查后端的接口、密钥和额度。") from error
 
 
@@ -172,6 +195,11 @@ class DoubaoSpeech:
         self.settings, self.client = settings, client
 
     async def synthesize(self, text: str) -> bytes:
+        return b"".join([chunk async for chunk in self.stream(text)])
+
+    async def stream(self, text: str, *, format="mp3"):
+        if format not in {"mp3", "pcm"}:
+            raise ValueError("Unsupported speech encoding")
         s = self.settings
         headers = {
             "X-Api-Key": s.doubao_tts_api_key.get_secret_value(),
@@ -181,7 +209,7 @@ class DoubaoSpeech:
         body = {"req_params": {
             "text": text,
             "speaker": s.doubao_tts_voice,
-            "audio_params": {"format": "mp3", "sample_rate": 24000, "speech_rate": s.doubao_tts_speech_rate},
+            "audio_params": {"format": format, "sample_rate": 24000, "speech_rate": s.doubao_tts_speech_rate},
         }}
         if ssml := doubao_ssml(text):
             body["req_params"]["ssml"] = ssml
@@ -202,14 +230,17 @@ class DoubaoSpeech:
                 raise ProviderError("豆包语音合成失败，请检查密钥、音色授权及额度。")
             if finished:
                 raise ValueError("Data after completion")
+            decoded = b""
             encoded = packet.get("data")
             if encoded is not None:
                 if not isinstance(encoded, str):
                     raise ValueError("Invalid audio data")
-                audio.extend(base64.b64decode(encoded, validate=True))
+                decoded = base64.b64decode(encoded, validate=True)
+                audio.extend(decoded)
                 if len(audio) > self.max_audio_bytes:
                     raise ProviderError("语音文件过大，请缩短回复。")
             finished = code == 20000000
+            return decoded
 
         try:
             async with self.client.stream("POST", self.endpoint, headers=headers, json=body) as response:
@@ -218,7 +249,7 @@ class DoubaoSpeech:
                 received = 0
                 # Network chunks do not coincide with JSON records. Bound the wire
                 # size before parsing, including a response with no newline at all.
-                async for chunk in response.aiter_bytes(chunk_size=65536):
+                async for chunk in response.aiter_bytes():
                     received += len(chunk)
                     if received > self.max_response_bytes:
                         raise ProviderError("语音响应过大，请缩短回复。")
@@ -226,17 +257,30 @@ class DoubaoSpeech:
                     while (end := pending.find(b"\n")) >= 0:
                         line = bytes(pending[:end])
                         del pending[:end + 1]
-                        consume(line)
+                        if chunk := consume(line):
+                            yield chunk
+                    # A completion packet is the application-level end of this audio.
+                    # Do not wait for EOF (or a 64 KiB buffer) after it arrives.
+                    if finished:
+                        if pending.strip():
+                            if chunk := consume(bytes(pending)):
+                                yield chunk
+                        pending.clear()
+                        break
                 if pending:
-                    consume(bytes(pending))
+                    if chunk := consume(bytes(pending)):
+                        yield chunk
             if not finished:
                 raise ProviderError("豆包语音返回不完整，请重试。")
             if not audio:
                 raise ProviderError("豆包语音返回了空音频。")
-            return bytes(audio)
         except httpx.TimeoutException as error:
             raise ProviderError("语音合成超时，请稍后点击朗读重试。") from error
-        except (httpx.RequestError, httpx.HTTPStatusError) as error:
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            raise ProviderError(f"豆包语音拒绝请求（HTTP {status}），请检查密钥、音色授权和额度后点击朗读重试。",
+                                retry_safe=status in {400,401,403,404,422,429}) from error
+        except httpx.RequestError as error:
             raise ProviderError("豆包语音请求失败，请检查网络、密钥和服务开通状态。") from error
         except (ValueError, TypeError) as error:
             raise ProviderError("无法读取豆包语音响应，请检查接口配置。") from error

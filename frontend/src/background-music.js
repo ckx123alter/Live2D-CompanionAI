@@ -53,12 +53,39 @@ export class BackgroundMusic {
     this.fadeToTarget();
   }
 
+  connectContext(context) {
+    if (this.source || this.disposed) return;
+    // iOS ignores HTMLMediaElement.volume. Route music through the same
+    // gesture-unlocked context as speech, with an independent music gain.
+    this.context = context;
+    this.gain = context.createGain();
+    this.gain.gain.value = this.volume * (this.speaking ? .25 : 1);
+    this.source = context.createMediaElementSource(this.audio);
+    this.source.connect(this.gain);
+    this.gain.connect(context.destination);
+    cancelAnimationFrame(this.frame);
+    this.audio.volume = 1;
+  }
+
   fadeToTarget() {
     cancelAnimationFrame(this.frame);
-    const from = this.audio.volume;
     const to = this.volume * (this.speaking ? .25 : 1);
-    const started = performance.now();
     const duration = this.speaking ? 220 : 800;
+    if (this.gain) {
+      const param = this.gain.gain;
+      const now = this.context.currentTime;
+      // Replace any unfinished recovery ramp when another replay starts.
+      if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(now);
+      else {
+        const value = param.value;
+        param.cancelScheduledValues(now);
+        param.setValueAtTime(value, now);
+      }
+      param.linearRampToValueAtTime(to, now + duration / 1000);
+      return;
+    }
+    const from = this.audio.volume;
+    const started = performance.now();
     const tick = now => {
       const progress = Math.min(1, (now - started) / duration);
       const eased = progress * progress * (3 - 2 * progress);
@@ -77,6 +104,8 @@ export class BackgroundMusic {
     this.disposed = true;
     this.pause();
     cancelAnimationFrame(this.frame);
+    this.source?.disconnect();
+    this.gain?.disconnect();
     this.audio.removeAttribute('src');
     this.audio.load();
     this.audio.remove();

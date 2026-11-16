@@ -18,6 +18,15 @@ export function drawingBoardMarkup() {
 
 export function createDrawingBoard(root, { onGuess, onCorrect, onRetryRound, onClose, onState = () => {}, onChange = () => {}, onSave = () => {}, onError = () => {} }) {
   const $ = selector => root.querySelector(selector);
+  const brushSize = $('#drawing-size');
+  function updateBrushSizeFill() {
+    const min = Number(brushSize.min);
+    const fraction = (brushSize.valueAsNumber - min) / (Number(brushSize.max) - min);
+    // The center of the 16 px thumb travels between 8 px insets.
+    brushSize.style.setProperty('--fill-end', `calc(${fraction * 100}% + ${8 - fraction * 16}px)`);
+  }
+  brushSize.addEventListener('input', updateBrushSizeFill);
+  updateBrushSizeFill();
   const canvas = $('#drawing-canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   let tool = 'pen', pointer = null, previous = null, locked = false, ink = false, canConfirm = false;
@@ -45,7 +54,17 @@ export function createDrawingBoard(root, { onGuess, onCorrect, onRetryRound, onC
     $('#drawing-reply').hidden = !$('#drawing-reply').textContent;
     onState(answerState());
   }
-  function answerState() { return {character:mode==='character', finished:mode==='finished', roundId:round?.round_id, ready:Boolean(round)&&!animating&&!locked, solved}; }
+  function answerState() {
+    return {
+      character: mode === 'character',
+      drawing: mode === 'character' && animating,
+      paused,
+      finished: mode === 'finished',
+      roundId: round?.round_id,
+      ready: Boolean(round) && !animating && !locked,
+      solved,
+    };
+  }
   function remember() {
     history.push(ctx.getImageData(0, 0, 512, 512));
     if (history.length > 20) history.shift();
@@ -56,7 +75,7 @@ export function createDrawingBoard(root, { onGuess, onCorrect, onRetryRound, onC
   }
   function draw(from, to) {
     ctx.strokeStyle = ctx.fillStyle = tool === 'eraser' ? '#ffffff' : '#282333';
-    ctx.lineWidth = Number($('#drawing-size').value) * (tool === 'eraser' ? 3 : 1);
+    ctx.lineWidth = brushSize.valueAsNumber * (tool === 'eraser' ? 3 : 1);
     ctx.lineCap = ctx.lineJoin = 'round';
     ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
     ctx.beginPath(); ctx.arc(to.x, to.y, ctx.lineWidth / 2, 0, Math.PI * 2); ctx.fill();

@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True)
 
     app_env: Literal["local", "production"] = "local"
-    credential_mode: Literal["server", "byok"] = "server"
     # Optional server-key budgets; local use and BYOK are unlimited by default.
     server_daily_budgets_enabled: bool = False
     daily_session_calls: int = Field(default=80, ge=1)
@@ -24,10 +23,10 @@ class Settings(BaseSettings):
     daily_session_tts_chars: int = Field(default=15_000, ge=1)
     daily_ip_tts_chars: int = Field(default=30_000, ge=1)
     daily_global_tts_chars: int = Field(default=250_000, ge=1)
-    max_session_messages: int = Field(default=200, ge=20, le=2000, multiple_of=2)
+    max_session_messages: int = Field(default=100, ge=20, le=2000, multiple_of=2)
     max_sessions: int = Field(default=2000, ge=1)
-    session_retention_days: int = Field(default=7, ge=1, le=30)
-    audio_retention_days: int = Field(default=7, ge=1, le=30)
+    session_retention_days: int = Field(default=3, ge=1, le=30)
+    audio_retention_days: int = Field(default=3, ge=1, le=30)
     max_session_audio_mb: int = Field(default=20, ge=1)
     max_audio_cache_mb: int = Field(default=256, ge=10)
     max_shared_audio_mb: int = Field(default=32, ge=1)
@@ -65,8 +64,6 @@ class Settings(BaseSettings):
             if not url.startswith(("http://", "https://")):
                 raise ValueError("服务地址必须是 HTTP(S) URL")
         if self.app_env == "production":
-            if self.credential_mode != "byok":
-                raise ValueError("生产模式必须使用 CREDENTIAL_MODE=byok，禁止匿名消耗服务器 Key")
             if not self.cookie_secure:
                 raise ValueError("生产模式必须设置 COOKIE_SECURE=true")
             if not self.origins:
@@ -93,7 +90,7 @@ class Settings(BaseSettings):
 
     @property
     def tts_mode(self) -> str:
-        if self.credential_mode == "byok" or self.tts_enabled:
+        if self.app_env == "production" or self.tts_enabled:
             return "server"
         return "disabled" if self.tts_provider == "doubao" else "browser"
 

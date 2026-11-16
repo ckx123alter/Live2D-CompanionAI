@@ -102,7 +102,7 @@ class DrawingGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls, [])
 
     async def test_can_load_prepared_drawing_without_provider(self):
-        c, _ = await self.client(self.settings(credential_mode='server', llm_api_key='')); await self.connect(c)
+        c, _ = await self.client(self.settings(app_env='local', llm_api_key='')); await self.connect(c)
         self.assertEqual((await self.round(c)).status_code, 200)
         self.assertEqual(self.calls, [])
 

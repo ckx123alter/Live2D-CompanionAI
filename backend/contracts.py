@@ -157,6 +157,7 @@ class SpeechRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message_id: int | None = Field(default=None, gt=0)
     preset: Literal["welcome"] | None = None
+    retry: bool = False
 
     @model_validator(mode="after")
     def one_source(self):

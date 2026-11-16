@@ -11,9 +11,9 @@ test('a transient session failure can reconnect without reloading the page', asy
     return elements.get(selector);
   };
   let attempts = 0;
-  const context = vm.createContext({$, toast() {}, promptCredentials() {},
+  const context = vm.createContext({$, speech:{}, toast() {}, promptCredentials() {},
     api: async path => {
-      if (path === '/config') return {credential_mode: 'server'};
+      if (path === '/config') return {app_env: 'local'};
       if (++attempts === 1) throw new Error('temporary failure');
       return {messages: []};
     },

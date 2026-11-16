@@ -306,10 +306,10 @@ class Store:
         with self.connection() as db:
             db.execute("DELETE FROM request_leases WHERE name=? AND owner=?", (name, owner))
 
-    def _claim_operation(self, db, name, fingerprint, allow_completed=False):
+    def _claim_operation(self, db, name, fingerprint, allow_completed=False, manual_retry=False):
         row = db.execute("SELECT * FROM operation_claims WHERE name=?", (name,)).fetchone()
-        if row and row["expires"] > time.time() and not (allow_completed and row["status"] == "completed"):
-            detail = "这段语音的上次合成结果未能确认，24 小时内不自动重复提交；请联系维护者核查。" if name.startswith("audio:") else "上次请求已经提交，结果未能确认或已被清理；如需重新提交，请再次发送（可能再次计费）。"
+        if row and row["expires"] > time.time() and not (row["status"] == "failed" or (allow_completed and row["status"] == "completed") or (manual_retry and name.startswith("audio:") and row["status"] == "processing" and row["fingerprint"] == fingerprint)):
+            detail = "上次语音结果未能确认，请点击朗读手动重试（可能再次计费）。" if name.startswith("audio:") else "上次请求已经提交，结果未能确认或已被清理；如需重新提交，请再次发送（可能再次计费）。"
             raise GuardError(detail, 409, "request_uncertain")
         db.execute("INSERT OR REPLACE INTO operation_claims VALUES (?,?,'processing',?)", (name, fingerprint, int(time.time())+86400))
 
@@ -329,7 +329,7 @@ class Store:
             for scope, amount, maximum in charges:
                 db.execute("INSERT INTO usage_counters VALUES (?,?,?,?,?) ON CONFLICT(scope,kind,bucket) DO UPDATE SET used=used+excluded.used", (scope,kind,bucket,amount,(bucket+1)*period))
 
-    def reserve_usage(self, session, ip, credential, *, tokens=0, tts_chars=0, operation=None, fingerprint="", allow_completed=False):
+    def reserve_usage(self, session, ip, credential, *, tokens=0, tts_chars=0, operation=None, fingerprint="", allow_completed=False, manual_retry=False):
         # All dimensions commit together; failures/uncertain upstream outcomes
         # retain reservations rather than allowing free unlimited retries.
         now=int(time.time()); bucket=(now+8*3600)//86400; expiry=(bucket+1)*86400-8*3600
@@ -339,10 +339,10 @@ class Store:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if operation:
-                self._claim_operation(db, operation, fingerprint, allow_completed)
+                self._claim_operation(db, operation, fingerprint, allow_completed, manual_retry)
             # Visitors pay their own provider. Retain request deduplication, but
             # do not apply or accumulate site daily budgets in BYOK mode.
-            if self.settings.credential_mode == "byok" or not self.settings.server_daily_budgets_enabled:
+            if self.settings.app_env == "production" or not self.settings.server_daily_budgets_enabled:
                 return
             for scope, category in scopes:
                 for kind, amount in dimensions:

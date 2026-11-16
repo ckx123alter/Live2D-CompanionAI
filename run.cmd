@@ -57,6 +57,18 @@ function Invoke-Checked([string]$Executable, [string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Executable. Fix the error above and run again." }
 }
 
+function Test-PipAvailable {
+    & $pythonPath -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pip') else 1)"
+    return $LASTEXITCODE -eq 0
+}
+
+function Get-FileDigest([string]$Path) {
+    $stream = [IO.File]::OpenRead($Path)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+    finally { $sha.Dispose(); $stream.Dispose() }
+}
+
 function Initialize-LocalEnvironment {
     $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
     $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
@@ -73,17 +85,22 @@ function Initialize-LocalEnvironment {
         Invoke-Checked $pythonCommand.Source ($pythonArguments + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)'))
         Invoke-Checked $pythonCommand.Source ($pythonArguments + @('-m', 'venv', (Join-Path $projectPath '.venv')))
     }
+    if (!(Test-PipAvailable)) {
+        Write-Host 'Restoring pip in the project Python environment...'
+        Invoke-Checked $pythonPath @('-m', 'ensurepip', '--upgrade')
+        if (!(Test-PipAvailable)) { throw 'pip could not be restored. Repair your Python installation and run again.' }
+    }
     $requirements = Join-Path $projectPath 'requirements.txt'
     $pythonStamp = Join-Path $projectPath '.venv\whale-requirements.sha256'
-    $pythonHash = (Get-FileHash -LiteralPath $requirements -Algorithm SHA256).Hash
+    $pythonHash = Get-FileDigest $requirements
     if (!(Test-Path -LiteralPath $pythonStamp) -or (Get-Content -LiteralPath $pythonStamp -Raw).Trim() -ne $pythonHash) {
         Write-Host 'Installing Python dependencies (first run or requirements changed)...'
         Invoke-Checked $pythonPath @('-m', 'pip', 'install', '-r', $requirements)
         Set-Content -LiteralPath $pythonStamp -Value $pythonHash -Encoding ASCII
     }
     $npmStamp = Join-Path $frontendPath 'node_modules\whale-packages.sha256'
-    $npmHash = ((Get-FileHash -LiteralPath (Join-Path $frontendPath 'package.json') -Algorithm SHA256).Hash +
-                (Get-FileHash -LiteralPath (Join-Path $frontendPath 'package-lock.json') -Algorithm SHA256).Hash)
+    $npmHash = ((Get-FileDigest (Join-Path $frontendPath 'package.json')) +
+                (Get-FileDigest (Join-Path $frontendPath 'package-lock.json')))
     if (!(Test-Path -LiteralPath $vitePath) -or !(Test-Path -LiteralPath $npmStamp) -or (Get-Content -LiteralPath $npmStamp -Raw).Trim() -ne $npmHash) {
         Write-Host 'Installing frontend dependencies (first run or packages changed)...'
         Invoke-Checked $npmCommand.Source @('--prefix', $frontendPath, 'ci')

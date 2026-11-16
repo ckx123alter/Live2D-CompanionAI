@@ -13,7 +13,14 @@
 .drawing-toolbar [data-draw-tool] svg{width:17px;height:17px}
 .drawing-toolbar [aria-pressed=true]{border-color:#bda27a66;background:#c5a87512;color:#dcc7a7}
 .drawing-toolbar label{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--muted)}
-.drawing-toolbar input{width:55px;accent-color:var(--gold)}
+.drawing-toolbar input {
+  --track-fill: linear-gradient(to right, var(--gold) var(--fill-end, 8px), #71637a var(--fill-end, 8px));
+  width:55px;height:20px;margin:0;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer
+}
+.drawing-toolbar input::-webkit-slider-runnable-track{height:4px;border-radius:4px;background:var(--track-fill)}
+.drawing-toolbar input::-moz-range-track{height:4px;border-radius:4px;background:var(--track-fill)}
+.drawing-toolbar input::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;margin-top:-6px;border:2px solid #2b243b;border-radius:50%;background:var(--gold);box-shadow:0 0 0 1px #bda27a66}
+.drawing-toolbar input::-moz-range-thumb{width:12px;height:12px;border:2px solid #2b243b;border-radius:50%;background:var(--gold);box-shadow:0 0 0 1px #bda27a66}
 .drawing-paper{width:min(100%,max(180px,calc(var(--drawing-max-height,480px) - 190px)));margin:0 auto;flex-shrink:0;border:5px solid #d9d4e3;border-radius:13px;background:#fff;overflow:hidden;box-shadow:0 8px 28px #0002}
 #drawing-canvas{width:100%;height:auto;aspect-ratio:1;touch-action:none;cursor:crosshair}
 .drawing-submit{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0}

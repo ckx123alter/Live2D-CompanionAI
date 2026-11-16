@@ -18,6 +18,7 @@ import { createAppearanceTransition } from './appearance-transition.js';
 import { createEyeLocator, gazeTarget } from './gaze.js';
 import { hitsModel, tapRegion, tapPose } from './interaction.js';
 import * as PIXI from 'pixi.js';
+import { modelProfile } from './model-profile.js';
 import { PencilLine, Trash2 } from 'lucide';
 import { createIcons, ArrowUpRight, Send, Volume2, VolumeX, Settings2, Download, Eraser, RotateCcw, Maximize, Minimize, Plus, Minus, X, Sparkles, Mic, MessageCircle, SlidersHorizontal, Check, ChevronRight, Smile, Heart, Frown, CircleHelp, Laugh, Cloud, Ellipsis, Hand, Pointer, Wheat, UserRound, Glasses, Circle, ArrowDownRight, CookingPot, Droplets, Annoyed } from 'lucide';
 
@@ -55,17 +56,17 @@ settings.voice = true;
 if (!Array.isArray(messages)) messages = [];
 messages = messages.filter(m => ['user','assistant'].includes(m.role) && typeof m.text === 'string').slice(-100).map(m=>m.role==='assistant'?{...m,emotion:normalizeEmotion(m.emotion)}:m);
 if (!messages.length) messages = [{ role: 'assistant', text: WELCOME_TEXT, emotion: 'neutral' }];
-let busy = false, currentExpression = 'neutral', model, pixi, zoom = 1, offset = {x:0,y:0}, speaking = false;
+let busy = false, waitingReply = false, currentExpression = 'neutral', model, pixi, zoom = 1, offset = {x:0,y:0}, speaking = false;
 let backend = null, serviceReady = false, retryTurn = null;
 const bgm = new BackgroundMusic({ enabled: settings.bgm, volume: settings.bgmVolume });
-const speech = new SpeechPlayer({ onSpeaking: value => { speaking = value; bgm.setSpeaking(value); }, onError: text => toast(text) });
+const speech = new SpeechPlayer({ onSpeaking: value => { speaking = value; bgm.setSpeaking(value); }, onError: text => toast(text), onContext: context => bgm.connectContext(context) });
 let welcomePending=true;
 function tryPlayWelcome() {
   if(!welcomePending || !serviceReady || !model)return;
   const welcome=messages.length===1&&messages[0].role==='assistant'&&messages[0].text===WELCOME_TEXT?messages[0]:null;
   if(!settings.voice || !welcome){welcomePending=false;return;}
   // Wait for actual BGM playback, session/cache access, and the lip-sync model.
-  if(!settings.bgm || bgm.audio.paused || bgm.audio.readyState<3 || bgm.audio.volume<=0 || busy || speaking)return;
+  if(!settings.bgm || bgm.audio.paused || bgm.audio.readyState<3 || bgm.volume<=0 || busy || speaking)return;
   welcomePending=false;
   speech.unlock();
   void speak(welcome);
@@ -202,7 +203,7 @@ $('#app').innerHTML = `
     <div class="stage-bottom"><button class="glass-button" id="reset-view">${i('rotate-ccw')}<span>复位视角</span></button><div class="zoom-controls"><button id="zoom-out" title="缩小" aria-label="缩小">${i('minus')}</button><span id="zoom-label">100%</span><button id="zoom-in" title="放大" aria-label="放大">${i('plus')}</button><button id="fullscreen" title="全屏" aria-label="全屏">${i('maximize')}</button></div></div>
   </section>
   <aside class="panel" aria-label="角色互动面板">
-    <div class="panel-header"><div class="tabs" role="tablist"><button class="tab active" id="chat-tab" role="tab" aria-selected="true" aria-controls="chat-view">${i('message-circle')}对话</button><button class="tab" id="actions-tab" role="tab" aria-selected="false" aria-controls="actions-view">${i('sliders-horizontal')}操作</button></div><button id="reconnect" class="glass-button" type="button" hidden>重新连接</button><span class="service-badge"><span></span>未连接</span></div>
+    <div class="panel-header"><div class="tabs" role="tablist"><button class="tab active" id="chat-tab" role="tab" aria-selected="true" aria-controls="chat-view">${i('message-circle')}对话</button><button class="tab" id="actions-tab" role="tab" aria-selected="false" aria-controls="actions-view">${i('sliders-horizontal')}操作</button></div><button id="reconnect" class="glass-button" type="button" hidden>重新连接</button></div>
     <section id="chat-view" class="tab-view" role="tabpanel" aria-labelledby="chat-tab">
       <div class="chat-tools"><span id="count">新的相遇</span><button class="affection-badge" id="affection-badge" aria-label="查看好感度" aria-haspopup="dialog">${i('heart')}<span id="affection-value">60</span></button><div><button id="export" title="导出对话" aria-label="导出对话">${i('download')}</button><button id="clear" title="清空对话" aria-label="清空对话">${i('trash-2')}</button><button id="settings" title="对话设置" aria-label="对话设置">${i('settings-2')}</button></div></div>
       <div class="messages" id="messages" role="log" aria-live="polite"></div>
@@ -219,10 +220,10 @@ $('#app').innerHTML = `
     </section>
   </aside>
 </main>
-<dialog id="settings-dialog"><div class="dialog-header"><div><h2>设置</h2></div><button class="close-dialog" aria-label="关闭">${i('x')}</button></div><label class="setting-row"><span>目光跟随<small>让她的视线跟随你的鼠标</small></span><input type="checkbox" id="follow-setting" role="switch"></label><label class="setting-row"><span>自动朗读<small id="voice-source">使用设备语音</small></span><input type="checkbox" id="voice-setting" role="switch"></label><label class="volume-setting">朗读音量 <input id="volume-setting" type="range" min="0" max="1" step=".05"></label><label class="setting-row"><span>背景音乐</span><input type="checkbox" id="bgm-setting" role="switch"></label><label class="volume-setting">音乐音量 <input id="bgm-volume-setting" type="range" min="0" max="1" step=".01"></label><button id="credentials-open" class="glass-button" hidden type="button">我的 API Key</button><p class="model-credits">DeepSeek-chan（大肥鱼）<br>原画及拆分：神宫凉子<br>Live2D：霓虹猫_NeonNeko<br>模型来源：神宫凉子<br>BGM来源：黑耀耀_officialてす</p><button class="primary close-dialog">完成</button></dialog>
-<dialog id="clear-dialog"><h2>恢复初始状态？</h2><p>清空聊天、游戏进度和今日游戏次数，好感度恢复 60，角色与页面设置恢复默认，已填写的 API Key 会保留。你也可以先导出对话留念。</p><div class="dialog-actions"><button class="glass-button" id="cancel-clear">再聊一会</button><button class="primary" id="confirm-clear">清空对话</button></div></dialog>
-<dialog id="affection-dialog" class="affection-dialog"><div class="dialog-header"><h2>和她的默契</h2><button class="close-dialog" aria-label="关闭">${i('x')}</button></div><p id="affection-title"></p><div class="affection-track"><span id="affection-progress"></span></div><p id="affection-detail"></p><section class="affection-history" aria-labelledby="affection-history-title"><h3 id="affection-history-title">最近互动</h3><ul id="affection-history"></ul><p id="affection-history-empty">还没有好感度变化</p></section></dialog>
-<dialog id="credentials-dialog"><div class="dialog-header"><h2>我的 API Key</h2><button class="close-dialog" aria-label="关闭">${i('x')}</button></div><form id="credentials-form" autocomplete="off"><p>对话 Key：前往 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">DeepSeek 开放平台</a>，登录后创建 API Key。</p><p>语音 Key（可选）：前往 <a href="https://console.volcengine.com/speech/new/setting/apikeys?ResourceID=volc.seedicl.default&amp;projectName=default" target="_blank" rel="noopener noreferrer">豆包语音控制台</a>，登录后开通「语音合成」，再创建 API Key。未填写时，仅播放已有缓存语音。</p><p>Key 仅在当前页面内存中使用，刷新或离开页面后需要重新填写；试用后请去对应平台删除API Key以免泄露。</p><label for="llm-key">DeepSeek API key</label><input id="llm-key" type="password" autocomplete="off" spellcheck="false" maxlength="512" placeholder="填写你的对话 Key"><label id="tts-key-label" for="tts-key">豆包语音 API Key</label><input id="tts-key" type="password" autocomplete="off" spellcheck="false" maxlength="512" placeholder="填写你的语音 Key"><p class="credentials-note">可以去<a href="https://github.com/ckx123alter/Live2D-CompanionAI" target="_blank" rel="noopener noreferrer">github</a>收藏并下载到本地运行哦o(*￣▽￣*)ブ</p><div class="dialog-actions"><button type="button" class="glass-button" id="credentials-delete">删除 Key</button><button type="submit" class="primary">在当前页面使用</button></div></form></dialog>
+<dialog id="settings-dialog"><div class="dialog-header"><div><h2 tabindex="-1" autofocus>设置</h2></div><button class="close-dialog" aria-label="关闭">${i('x')}</button></div><label class="setting-row"><span>目光跟随<small>让她的视线跟随你的鼠标</small></span><input type="checkbox" id="follow-setting" role="switch"></label><label class="setting-row"><span>自动朗读<small id="voice-source">使用设备语音</small></span><input type="checkbox" id="voice-setting" role="switch"></label><label class="volume-setting">朗读音量 <input id="volume-setting" type="range" min="0" max="1" step=".05"></label><label class="setting-row"><span>背景音乐</span><input type="checkbox" id="bgm-setting" role="switch"></label><label class="volume-setting">音乐音量 <input id="bgm-volume-setting" type="range" min="0" max="1" step=".01"></label><button id="credentials-open" class="glass-button" hidden type="button">我的 API Key</button><p class="model-credits">DeepSeek-chan（大肥鱼）<br>原画及拆分：神宫凉子<br>Live2D：霓虹猫_NeonNeko<br>模型来源：神宫凉子<br>BGM来源：黑耀耀_officialてす</p><button class="primary close-dialog">完成</button></dialog>
+<dialog id="clear-dialog"><div class="dialog-header"><h2 tabindex="-1" autofocus>恢复初始状态？</h2><button class="close-dialog" aria-label="关闭">${i('x')}</button></div><p>清空聊天、游戏进度和今日游戏次数，好感度恢复 60，角色与页面设置恢复默认，已填写的 API Key 会保留。你也可以先导出对话留念。</p><div class="dialog-actions"><button class="glass-button" id="cancel-clear">再聊一会</button><button class="primary" id="confirm-clear">清空对话</button></div></dialog>
+<dialog id="affection-dialog" class="affection-dialog"><div class="dialog-header"><h2 tabindex="-1" autofocus>和她的默契</h2><button class="close-dialog" aria-label="关闭">${i('x')}</button></div><p id="affection-title"></p><div class="affection-track"><span id="affection-progress"></span></div><p id="affection-detail"></p><section class="affection-history" aria-labelledby="affection-history-title"><h3 id="affection-history-title">最近互动</h3><ul id="affection-history"></ul><p id="affection-history-empty">还没有好感度变化</p></section></dialog>
+<dialog id="credentials-dialog"><div class="dialog-header"><h2 tabindex="-1" autofocus>我的 API Key</h2><button class="close-dialog" aria-label="关闭">${i('x')}</button></div><form id="credentials-form" autocomplete="off"><p>对话 Key：前往 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">DeepSeek 开放平台</a>，登录后创建 API Key。</p><p>语音 Key（可选）：前往 <a href="https://console.volcengine.com/speech/new/setting/apikeys?ResourceID=volc.seedicl.default&amp;projectName=default" target="_blank" rel="noopener noreferrer">豆包语音控制台</a>，登录后开通「语音合成」，再创建 API Key。未填写时，仅播放已有缓存语音。</p><p>Key 仅在当前页面内存中使用，刷新或离开页面后需要重新填写；试用后请去对应平台删除API Key以免泄露。</p><label for="llm-key">DeepSeek API key</label><input id="llm-key" type="password" autocomplete="off" spellcheck="false" maxlength="512" placeholder="填写你的对话 Key"><label id="tts-key-label" for="tts-key">豆包语音 API Key</label><input id="tts-key" type="password" autocomplete="off" spellcheck="false" maxlength="512" placeholder="填写你的语音 Key"><p class="credentials-note">可以去<a href="https://github.com/ckx123alter/Live2D-CompanionAI" target="_blank" rel="noopener noreferrer">github</a>收藏并下载到本地运行哦o(*￣▽￣*)ブ</p><div class="dialog-actions"><button type="button" class="glass-button" id="credentials-delete">删除 Key</button><button type="submit" class="primary">在当前页面使用</button></div></form></dialog>
 <dialog id="login-dialog"><form id="login-form"><h2>访问口令</h2><label for="access-password">请输入分享者提供的口令</label><input id="access-password" type="password" autocomplete="current-password" maxlength="256" required><p id="login-error" role="alert"></p><button class="primary" type="submit">进入聊天</button></form></dialog>
 <div id="toast" role="status"></div>`;
 
@@ -274,17 +275,28 @@ function syncAppearance(react=true) {
   const now=performance.now();
   if(appearanceTransition.set(targets,now) && react && model && !tapReaction && now-switchStarted>=650)switchStarted=now;
 }
-function toast(text) { $('#toast').textContent = text; $('#toast').classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('#toast').classList.remove('show'),2800); }
+function toast(text) { $('#toast').textContent = text; $('#toast').classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('#toast').classList.remove('show'),Math.max(2800,Math.min(10000,text.length*110))); }
 function renderMessages() {
-  const list = $('#messages'); list.replaceChildren();
+  const list = $('#messages');
+  let changed=false;
   const drawingReplies=drawingReplyFlags(messages,pendingGameCompletion);
   let latestDrawingReply=null;
   messages.forEach((m,index) => {
+    const readable=m.role==='assistant' && !(backend?.tts==='server'&&!m.id&&m.text!==WELCOME_TEXT);
+    const signature=JSON.stringify([m.role,m.text,Boolean(drawingReplies[index]),readable]);
+    if(drawingReplies[index])latestDrawingReply=m;
+    const existing=list.children[index];
+    if(existing?.messageSignature===signature) {
+      existing.messageData=m;
+      const play=existing.querySelector('.read-message');
+      if(play)play.disabled=waitingReply||play.getAttribute('aria-busy')==='true';
+      return;
+    }
     const row = document.createElement('div'); row.className=`message ${m.role}`;
+    row.messageSignature=signature;row.messageData=m;
     if (m.role==='assistant') { const img=document.createElement('img'); img.src=avatar; img.alt='她'; img.className='avatar'; row.append(img); }
     const content=document.createElement('div'); content.className='message-content'; const bubble=document.createElement('div'); bubble.className='bubble'; bubble.textContent=m.text; content.append(bubble);
     if(drawingReplies[index]) {
-      latestDrawingReply=m;
       bubble.classList.add('drawing-invitation');
       const enter=document.createElement('button');enter.type='button';enter.className='drawing-enter';
       enter.title='进入你画我猜';enter.setAttribute('aria-label','进入你画我猜');
@@ -292,10 +304,36 @@ function renderMessages() {
       enter.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5.5v13L19 12Z" fill="currentColor"/></svg>';
       enter.onclick=()=>openDrawing();bubble.append(enter);
     }
-    if(m.role==='assistant' && !(backend?.tts==='server'&&!m.id&&m.text!==WELCOME_TEXT)) { const play=document.createElement('button'); play.className='read-message'; play.title='朗读这条消息'; play.setAttribute('aria-label','朗读这条消息'); play.innerHTML=i('volume-2'); play.onclick=()=>{speech.unlock();speak(m,{replay:true});}; content.append(play); } row.append(content); list.append(row);
+    if(readable) {
+      const play=document.createElement('button');
+      play.className='read-message'; play.title='朗读这条消息'; play.setAttribute('aria-label','朗读这条消息');
+      play.innerHTML=i('volume-2'); play.disabled=waitingReply;
+      play.onclick=async()=>{
+        if(waitingReply||play.disabled)return;
+        speech.unlock();
+        const showPending=pending=>{
+          play.disabled=pending||waitingReply;
+          play.setAttribute('aria-busy',String(pending));
+          play.innerHTML=i(pending?'loader-circle':'volume-2');icons();
+        };
+        showPending(true);
+        try {await speak(row.messageData,{replay:true,onReady:()=>showPending(false)});}
+        finally {showPending(false);}
+      };
+      content.append(play);
+    }
+    row.append(content);
+    if(existing)list.replaceChild(row,existing);else list.append(row);
+    changed=true;
   });
   drawingBoard.showReply(latestDrawingReply);
-  if(busy) { const el=document.createElement('div'); el.className='typing'; el.innerHTML='<span></span><span></span><span></span>'; el.setAttribute('aria-label','正在回复'); list.append(el); }
+  if(waitingReply&&!list.children[messages.length]?.classList.contains('typing')) {
+    const el=document.createElement('div');el.className='typing';el.innerHTML='<span></span><span></span><span></span>';el.setAttribute('aria-label','加载中');
+    const existing=list.children[messages.length];
+    if(existing)list.replaceChild(el,existing);else list.append(el);
+    changed=true;
+  }
+  while(list.children.length>messages.length+Number(waitingReply)){list.lastElementChild.remove();changed=true;}
   $('#count').textContent=`已对话 ${messages.filter(m=>m.role==='user').length} 次`;
   $('#affection-value').textContent=String(affection);
   renderAffectionDetails();
@@ -313,7 +351,7 @@ function renderMessages() {
       {opacity:1,backgroundColor:'#b77e970b'}
     ],{duration:720,easing:'ease-in-out'});
   }
-  icons(); requestAnimationFrame(()=>list.scrollTo({top:list.scrollHeight,behavior:'smooth'}));
+  if(changed){icons();requestAnimationFrame(()=>list.scrollTo({top:list.scrollHeight,behavior:'smooth'}));}
 }
 function replyAction(message) {
   return message.text==='唔......触及到我的知识盲区了。'?'Shake':message.action;
@@ -327,7 +365,7 @@ function performReply(message) {
   // playAction without hold also clears the selected action card.
   if(model && ['Wave','Point','Grass','Lean','Tilt','Nod','Shake','Rest'].includes(action)) playAction(action);
 }
-function speak(message, {replay=false}={}) {
+function speak(message, {replay=false,onReady=()=>{}}={}) {
   welcomePending=false;
   const special=message.text===quickReplies['答对了！'].text;
   let previousExpression, startRevision;
@@ -335,10 +373,11 @@ function speak(message, {replay=false}={}) {
   // An explicit replay owns its saved action, even after a manually held pose.
   // Give physics time to leave the previous pose before replaying the same gesture.
   if(restartAction)playAction('Rest');
-  return new Promise(resolve=>speech.play(message, { server: backend?.tts==='server', unavailable: backend?.tts==='disabled', volume: settings.volume, startDelay:restartAction?240:0,
-    onFinish:resolve,
+  return new Promise(resolve=>speech.play(message, { server: backend?.tts==='server', unavailable: backend?.tts==='disabled', volume: settings.volume, retry:replay, startDelay:restartAction?240:0,
+    beforeStart:preloadReply(message),onFinish:resolve,
     onStart:()=>{
-      previousExpression=currentExpression;
+      onReady();
+      previousExpression=currentExpression==='thinking'?'neutral':currentExpression;
       performReply(special?{...message,emotion:'curious',action:null}:message);
       startRevision=expressionRevision;
     },
@@ -353,11 +392,28 @@ function speak(message, {replay=false}={}) {
     },
   }));
 }
+async function presentReply(message, reveal) {
+  renderMessages();
+  let revealed=false, release;
+  const ready=new Promise(resolve=>{release=resolve;});
+  const show=()=>{
+    if(revealed)return;
+    revealed=true;waitingReply=false;reveal();renderMessages();release();
+  };
+  if(!settings.voice){
+    await preloadReply(message);show();performReply(message);
+    return {finished:Promise.resolve('ended')};
+  }
+  const finished=speak(message,{onReady:show});
+  // Turning voice off, failed synthesis, or blocked autoplay must still reveal
+  // the saved reply and release the typing state without re-sending the turn.
+  finished.then(()=>{if(!revealed){show();performReply(message);}});
+  await ready;
+  return {finished};
+}
 function showService() {
-  $('.service-badge').innerHTML='<span></span>'+(serviceReady?'已连接':'未连接');
-  $('#voice-source').textContent=backend?.credential_mode==='byok'&&!keyStatus().tts?'未填 TTS Key，仅播放共享缓存语音':backend?.tts==='disabled'?'角色语音尚未配置':backend?.tts==='server'?'使用角色语音':'使用设备语音';
-  $('#credentials-open').hidden=backend?.credential_mode!=='byok';
-  $('.send').disabled=!serviceReady || busy;
+  $('#voice-source').textContent=backend?.app_env==='production'&&!keyStatus().tts?'未填 TTS Key，仅播放共享缓存语音':backend?.tts==='disabled'?'角色语音尚未配置':backend?.tts==='server'?'使用角色语音':'使用设备语音';
+  $('#credentials-open').hidden=backend?.app_env!=='production';
   drawingBoard.setBusy(busy);
 }
 async function acceptHistory(data) {
@@ -380,7 +436,7 @@ async function connectBackend() {
   $('#reconnect').disabled=true;
   try {
   $('.send').disabled=true;
-  try { backend=await api('/config'); }
+  try { backend=await api('/config');speech.prepareTimeout=Math.min(190000,Math.max(15000,(Number(backend.request_timeout)||60)*1000+15000));speech.streaming=backend.tts_stream===true;void speech.configureShared?.(backend.shared_audio_profile); }
   catch { backend=null;serviceReady=false;showService();$('#reconnect').hidden=false;return; }
   showService();
   try { await acceptHistory(await api('/session')); $('#reconnect').hidden=true;promptCredentials(); }
@@ -395,6 +451,30 @@ function syncSettings() { $('#follow-setting').checked=settings.follow; $('#voic
 let expressionValues = {};
 let expressionStarted = performance.now();
 const expressionCache=new Map();
+function loadExpressionValues(name) {
+  if(!expressionCache.has(name))expressionCache.set(name,fetch(`/model/Exp3/${encodeURIComponent(name)}.exp3.json`,{signal:AbortSignal.timeout(30000)}).then(response=>{if(!response.ok)throw new Error('Missing expression');return response.json();}).then(data=>Object.fromEntries(data.Parameters.map(p=>[p.Id,p.Value]))).catch(error=>{expressionCache.delete(name);throw error;}));
+  return expressionCache.get(name);
+}
+function preloadReply(message) {
+  const entry=expressions.find(e=>e[0]===normalizeEmotion(message.emotion));
+  const pending=[];
+  if(typeof entry?.[3]==='string')pending.push(loadExpressionValues(entry[3]));
+  const action=replyAction(message), returns={Wave:'Rest',Point:'RestPoint',Grass:'RestGrass'};
+  if(model && returns[action]){
+    const manager=model.internalModel.motionManager;
+    pending.push(manager.loadMotion(action,0),manager.loadMotion(returns[action],0));
+  }
+  return new Promise(resolve=>{
+    // Optional pose downloads must not hold a completed reply indefinitely.
+    const timer=setTimeout(resolve,5000);
+    Promise.allSettled(pending).then(()=>{clearTimeout(timer);resolve();});
+  });
+}
+async function warmReplyResources() {
+  if(navigator.connection?.saveData)return;
+  const replies=Object.values(quickReplies);
+  for(let i=0;i<replies.length;i+=2)await Promise.allSettled(replies.slice(i,i+2).map(preloadReply));
+}
 async function setExpression(key) {
   key=normalizeEmotion(key);
   const revision=++expressionRevision;
@@ -406,8 +486,7 @@ async function setExpression(key) {
   if(entry[3] && typeof entry[3]==='object')values={...entry[3]};
   else if(entry[3]) {
     try {
-      if(!expressionCache.has(entry[3]))expressionCache.set(entry[3],fetch(`/model/Exp3/${encodeURIComponent(entry[3])}.exp3.json`).then(response=>{if(!response.ok)throw new Error('Missing expression');return response.json();}).then(data=>Object.fromEntries(data.Parameters.map(p=>[p.Id,p.Value]))));
-      values=await expressionCache.get(entry[3]);
+      values=await loadExpressionValues(entry[3]);
     } catch {
       expressionCache.delete(entry[3]);
       if(expressionRevision===revision)toast('表情加载失败，请重试');
@@ -430,45 +509,46 @@ async function setExpression(key) {
   currentExpression=key;expressionStarted=performance.now();expressionValues={...values};syncAppearance();
 }
 async function send(text) {
-  text=text.trim(); if(!text || busy || !serviceReady)return false;
+  text=text.trim();
+  if (!text || busy || !serviceReady || drawingBoard.answerState().drawing) return false;
   welcomePending=false;
   speech.unlock();speech.stop();if(model&&!heldAction)playAction('Rest');
   const previous=[...messages];
   const turn=retryTurn?.text===text?retryTurn:{text,request_id:crypto.randomUUID()};
-  messages.push({role:'user',text});$('#input').value='';busy=true;showService();renderMessages();
+  messages.push({role:'user',text});$('#input').value='';busy=true;waitingReply=true;showService();renderMessages();setExpression('thinking');
   let advanceDrawing=false;
   try {
-    let assistant, drawingResult;
+    let assistant, drawingResult, result;
     {
       if(hasDrawingSession)drawingBoard.pause();await drawingState.flush();
-      const result=await api('/chat',{method:'POST',body:turn});
-      messages=[...previous,result.user,result.assistant];assistant=result.assistant;drawingResult=result.drawing;
-      if(Number.isInteger(result.affection)){affectionFlashPending=result.affection!==affection;affection=result.affection;}
+      result=await api('/chat',{method:'POST',body:turn});
+      assistant=result.assistant;drawingResult=result.drawing;
     }
-    if(assistant.text===BINGO_TEXT)pendingGameCompletion=assistant;
-    retryTurn=null;save();renderMessages();
-    if(drawingResult)drawingBoard.showAnswer(assistant,drawingResult.correct);
-    if(assistant.text===DAILY_LIMIT_TEXT)drawingBoard.endGame(assistant);
-    activeTopic=assistant.text===DAILY_LIMIT_TEXT?'chat':assistant.topic||'chat';
-    if(activeTopic==='drawing_game'){
-      if(assistant.text===quickReplies['来玩你画我猜吧'].text&&drawingBoard.answerState().finished)drawingBoard.reset();
-      openDrawing();
-    }else{drawingBoard.pause();closeDrawing(false);}
-    if(hasDrawingSession)drawingState.schedule();
-    const confirmedDrawing=assistant.game_intent==='confirm'&&assistant.text===quickReplies['答对了！'].text;
-    if(settings.voice){
-      const playback=speak(assistant);
-      if(assistant===pendingGameCompletion)playback.then(()=>finishDrawingGame(assistant));
-      if(confirmedDrawing && await playback!=='ended')return false;
-    }else{performReply(assistant);finishDrawingGame(assistant);}
-    advanceDrawing=confirmedDrawing;
+    retryTurn=null;
+    const {finished:playback}=await presentReply(assistant,()=>{
+      messages=[...previous,result.user,assistant];
+      if(Number.isInteger(result.affection)){affectionFlashPending=result.affection!==affection;affection=result.affection;}
+      if(assistant.text===BINGO_TEXT)pendingGameCompletion=assistant;
+      save();
+      if(drawingResult)drawingBoard.showAnswer(assistant,drawingResult.correct);
+      if(assistant.text===DAILY_LIMIT_TEXT)drawingBoard.endGame(assistant);
+      activeTopic=assistant.text===DAILY_LIMIT_TEXT?'chat':assistant.topic||'chat';
+      if(activeTopic==='drawing_game'){
+        if(assistant.text===quickReplies['来玩你画我猜吧'].text&&drawingBoard.answerState().finished)drawingBoard.reset();
+        openDrawing();
+      }else{drawingBoard.pause();closeDrawing(false);}
+      if(hasDrawingSession)drawingState.schedule();
+    });
+    if(assistant===pendingGameCompletion)playback.then(()=>finishDrawingGame(assistant));
+    // The saved confirmation advances the game once the reply is visible.
+    advanceDrawing=assistant.game_intent==='confirm'&&assistant.text===quickReplies['答对了！'].text;
     return true;
   } catch(error) {
-    messages=previous;retryTurn=error.code==='request_uncertain'?null:turn;$('#input').value=text;toast(error.message);
+    messages=previous;retryTurn=error.code==='request_uncertain'?null:turn;$('#input').value=text;setExpression('neutral');toast(error.message);
     if(error.status===401){serviceReady=false;$('#login-dialog').showModal();}
     return false;
   } finally {
-    busy=false;showService();renderMessages();
+    busy=false;waitingReply=false;showService();renderMessages();
     if(advanceDrawing&&!drawingBoard.answerState().finished){
       characterRoundRequest={request_id:crypto.randomUUID()};
       await startCharacterRound();
@@ -511,9 +591,17 @@ const drawingBoard=createDrawingBoard($('#drawing-view'),{
   },
   onState:state=>{
     const guessing=activeTopic==='drawing_game'&&state.character&&!state.solved;
-    $('#input').placeholder=guessing?'输入你的答案……':'输入消息……';
-    $('#input').disabled=false;
-    $('.send').disabled=!serviceReady||busy;
+    const input = $('#input');
+    input.disabled = state.drawing;
+    if (state.drawing) {
+      input.placeholder = state.paused ? '打开画板继续绘画' : '画完后可以发送消息';
+    } else {
+      input.placeholder = guessing ? '输入你的答案……' : '输入消息……';
+    }
+    $('.send').disabled = !serviceReady || busy || state.drawing;
+    $('#suggestions').querySelectorAll('button').forEach(button => {
+      button.disabled = state.drawing;
+    });
   },
   onRetryRound:()=>startCharacterRound(),
   onError:toast,
@@ -610,22 +698,24 @@ async function guessDrawing(image) {
   if(!serviceReady || !backend){drawingBoard.showError('请先连接后端，再让我看你的画。');return;}
   speech.unlock();speech.stop();if(model&&!heldAction)playAction('Rest');
   const turn=drawingRetry?.image===image?drawingRetry:{request_id:crypto.randomUUID(),image};
-  drawingRetry=turn;busy=true;showService();renderMessages();setExpression('thinking');
+  drawingRetry=turn;busy=true;waitingReply=true;showService();renderMessages();setExpression('thinking');
   let failure=null;
   try {
     await drawingState.flush();
     const result=await api('/drawing/guess',{method:'POST',body:turn});
-    messages.push(result.user,result.assistant);drawingRetry=null;
-    drawingBoard.allowConfirmation();
-    if(Number.isInteger(result.affection)){affectionFlashPending=result.affection!==affection;affection=result.affection;}
-    save();
-    if(settings.voice)speak(result.assistant);else performReply(result.assistant);
+    drawingRetry=null;
+    await presentReply(result.assistant,()=>{
+      messages.push(result.user,result.assistant);
+      drawingBoard.allowConfirmation();
+      if(Number.isInteger(result.affection)){affectionFlashPending=result.affection!==affection;affection=result.affection;}
+      save();
+    });
   } catch(error) {
     if(error.code==='request_uncertain')drawingRetry=null;
     failure=error.message;setExpression('neutral');
     if(error.status===401){serviceReady=false;$('#login-dialog').showModal();}
   } finally {
-    busy=false;showService();renderMessages();
+    busy=false;waitingReply=false;showService();renderMessages();
     if(failure){if(failure===DAILY_LIMIT_TEXT)drawingBoard.endGame({text:failure});else drawingBoard.showError(failure);}
   }
 }
@@ -635,35 +725,55 @@ $('#reset-effects').onclick=()=>{clearTimeout(tapRestoreTimer);tapReaction=null;
 document.querySelectorAll('[data-motion]').forEach(b=>b.onclick=()=>playAction(heldAction===b.dataset.motion?'Rest':b.dataset.motion,true));
 syncActions();
 document.querySelectorAll('[data-body]').forEach(b=>b.onclick=()=>{settings.body=Number(b.dataset.body);zoom=1;offset={x:0,y:0};syncSettings();layoutModel();});
-$('#bgm-setting').onchange=e=>{settings.bgm=e.target.checked;bgm.setEnabled(settings.bgm);save();};
-$('#bgm-volume-setting').oninput=e=>{settings.bgmVolume=Number(e.target.value);bgm.setVolume(settings.bgmVolume);save();};
-$('#settings').onclick=()=>$('#settings-dialog').showModal();
+$('#bgm-setting').onchange=e=>{settings.bgm=e.target.checked;if(settings.bgm)speech.unlock();bgm.setEnabled(settings.bgm);save();};
+$('#bgm-volume-setting').oninput=e=>{settings.bgmVolume=Number(e.target.value);bgm.setVolume(settings.bgmVolume);tryPlayWelcome();save();};
+function openTitledDialog(dialog) {
+  // Repeated credential prompts must not steal focus while a Key is being entered.
+  if(dialog.open)return;
+  dialog.showModal();
+  // Explicitly focus the heading instead of relying only on native autofocus.
+  dialog.querySelector('h2[autofocus]')?.focus({preventScroll:true});
+}
+$('#settings').onclick=()=>openTitledDialog($('#settings-dialog'));
 function promptCredentials() {
-  if(backend?.credential_mode==='byok'&&!keyStatus().llm)openCredentials();
+  if(backend?.app_env==='production'&&!keyStatus().llm)openCredentials();
+}
+function syncCredentialFields() {
+  const status=keyStatus();
+  for(const [kind,placeholder] of [['llm','填写你的对话 Key'],['tts','填写你的语音 Key']]) {
+    const field=$(`#${kind}-key`);
+    field.disabled=status[kind];
+    // Display a fixed mask without putting credentials or a fake Key in the DOM.
+    field.placeholder=status[kind]?'********':placeholder;
+    field.title=status[kind]?'已保存；删除 Key 后可重新填写':'';
+    if(status[kind])field.value='';
+  }
 }
 function openCredentials() {
-  if(backend?.credential_mode!=='byok')return;
+  if(backend?.app_env!=='production')return;
   $('#tts-key-label').textContent=backend.tts_provider==='doubao'?'豆包 TTS API Key（可选）':'TTS API Key（可选）';
-  const status=keyStatus();
-  $('#llm-key').placeholder=status.llm?'已填写；留空保留':'填写你的对话 Key';
-  $('#credentials-dialog').showModal();
+  syncCredentialFields();
+  openTitledDialog($('#credentials-dialog'));
 }
 $('#credentials-open').onclick=openCredentials;
 window.addEventListener('credentials-required',openCredentials);
 $('#credentials-form').onsubmit=e=>{
   e.preventDefault();
   if(!$('#llm-key').value.trim()&&!keyStatus().llm){toast('请填写 LLM API Key，TTS Key 可以留空');$('#llm-key').focus();return;}
-  const stored=setUserKeys($('#llm-key').value,$('#tts-key').value);
+  const status=keyStatus();
+  const stored=setUserKeys(status.llm?'':$('#llm-key').value,status.tts?'':$('#tts-key').value);
+  syncCredentialFields();
   showService();
   $('#llm-key').value='';$('#tts-key').value='';
   $('#credentials-dialog').close();toast(stored?'Key 已在当前页面启用，刷新后需要重新填写':'浏览器无法保存会话，Key 仅在当前页面有效');
 };
 $('#credentials-delete').onclick=()=>{
-  const cleared=clearUserKeys();$('#llm-key').value='';$('#tts-key').value='';showService();
+  const cleared=clearUserKeys();$('#llm-key').value='';$('#tts-key').value='';syncCredentialFields();showService();
   toast(cleared?'Key 已删除，已提交的请求仍可能完成':'页面 Key 已清除，但会话存储无法删除，请清除此站点数据');
 };
 $('#credentials-dialog').addEventListener('close',()=>{$('#llm-key').value='';$('#tts-key').value='';});
 window.addEventListener('pagehide',()=>{$('#llm-key').value='';$('#tts-key').value='';});
+window.addEventListener('pageshow',event=>{if(event.persisted)syncCredentialFields();});
 
 function renderAffectionDetails() {
   const stages=['初次相遇','亲密伙伴','心有灵犀'];
@@ -687,13 +797,13 @@ function renderAffectionDetails() {
 }
 $('#affection-badge').onclick=()=>{
   renderAffectionDetails();
-  $('#affection-dialog').showModal();
+  openTitledDialog($('#affection-dialog'));
 };
 document.querySelectorAll('.close-dialog').forEach(b=>b.onclick=()=>b.closest('dialog').close());
 $('#follow-setting').onchange=e=>{settings.follow=e.target.checked;if(!settings.follow){gazePointer=null;model?.internalModel.focusController.focus(0,0);}syncSettings();};
 $('#voice-setting').onchange=e=>{settings.voice=e.target.checked;if(settings.voice)speech.unlock();else speech.stop();syncSettings();};
-$('#volume-setting').oninput=e=>{settings.volume=Number(e.target.value);if(speech.audio)speech.audio.volume=settings.volume;save();};
-$('#clear').onclick=()=>{if(busy)return toast('请等这一条回复完成');$('#clear-dialog').showModal();};
+$('#volume-setting').oninput=e=>{settings.volume=Number(e.target.value);speech.setVolume(settings.volume);save();};
+$('#clear').onclick=()=>{if(busy)return toast('请等这一条回复完成');openTitledDialog($('#clear-dialog'));};
 $('#cancel-clear').onclick=()=>$('#clear-dialog').close();
 $('#confirm-clear').onclick=async()=>{
   if(busy)return toast('请等这一条回复完成');
@@ -748,11 +858,33 @@ host.addEventListener('pointercancel',()=>drag=null);host.addEventListener('lost
 host.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();reactToTap({x:0,y:0},true);}});
 host.addEventListener('wheel',e=>{e.preventDefault();changeZoom(e.deltaY>0?-.05:.05);},{passive:false});
 async function loadModel() {
+  let contextLost=false;
+  const showFailure=message=>{
+    $('#loading').hidden=false;
+    $('#loading').innerHTML='<span class="error-symbol">◇</span><p>模型暂时没能到达</p><small></small><button class="glass-button" id="retry">重新加载</button>';
+    $('#loading small').textContent=message;
+    $('#retry').onclick=()=>location.reload();
+  };
   try {
     if(!window.Live2DCubismCore)throw new Error('Live2D 运行库没有加载');
     const {Live2DModel,Live2DPlugin,configureCubismSDK}=await import('untitled-pixi-live2d-engine/cubism');PIXI.extensions.add(Live2DPlugin);configureCubismSDK({memorySizeMB:64});
-    pixi=new PIXI.Application();await pixi.init({width:host.clientWidth,height:host.clientHeight,preference:'webgl',backgroundAlpha:0,antialias:true,resolution:Math.min(devicePixelRatio,2),autoDensity:true});host.append(pixi.canvas);pixi.canvas.setAttribute('aria-label','她 Live2D 模型');
-    model=await Live2DModel.from('/model/大肥鱼.model3.json',{autoHitTest:false,autoFocus:false,breathDepth:0.08,ticker:pixi.ticker});model.anchor.set(.5,0);pixi.stage.addChild(model);
+    const device={coarsePointer:matchMedia('(pointer: coarse)').matches,mobileUA:/iPhone|iPad|iPod|Android/i.test(navigator.userAgent),dpr:devicePixelRatio};
+    let profile=modelProfile(device);
+    pixi=new PIXI.Application();await pixi.init({width:host.clientWidth,height:host.clientHeight,preference:'webgl',backgroundAlpha:0,antialias:profile.antialias,resolution:profile.resolution,autoDensity:true});host.append(pixi.canvas);pixi.canvas.setAttribute('aria-label','她 Live2D 模型');
+    pixi.canvas.addEventListener('webglcontextlost',event=>{
+      event.preventDefault();contextLost=true;pixi.stop();
+      showFailure('浏览器中断了模型渲染，请关闭其他网页后重新加载。对话仍可使用。');
+    });
+    const gl=pixi.renderer.gl;
+    // Context-loss events arrive asynchronously. Cubism cannot render the intervening
+    // frame: its saved GL viewport is null and restoring it otherwise throws.
+    const renderFrame=pixi.render;
+    pixi.ticker.remove(renderFrame,pixi);
+    pixi.render=function(){if(!gl.isContextLost())renderFrame.call(this);};
+    pixi.ticker.add(pixi.render,pixi,PIXI.UPDATE_PRIORITY.LOW);
+    profile=modelProfile({...device,maxTextureSize:gl.getParameter(gl.MAX_TEXTURE_SIZE)});
+    $('#loading small').textContent=profile.lightweight?'正在加载手机版模型资源…':'正在加载模型资源…';
+    model=await Live2DModel.from(profile.url,{autoHitTest:false,autoFocus:false,breathDepth:0.08,ticker:pixi.ticker,textureOptions:profile.textureOptions});model.anchor.set(.5,0);pixi.stage.addChild(model);
     const core=model.internalModel.coreModel; const parameterIds=core.getModel().parameters.ids; const setParam=(id,value)=>{const index=parameterIds.indexOf(id);if(index>=0)core.setParameterValueByIndex(index,value);};
     const sweatMotion=await fetch('/model/Animation/IDLE.motion3.json').then(response=>{if(!response.ok)throw new Error('Sweat motion missing');return response.json();});
     const sampleExpression=createExpressionAnimation(sweatMotion);
@@ -897,13 +1029,21 @@ async function loadModel() {
       const restingMouth=(appearance.ParamMouthOpenY||0)*(appearance.mouthWeight||0);
       setParam('ParamMouthOpenY',speaking?mouth:restingMouth);
     });
-    new ResizeObserver(layoutModel).observe(host);layoutModel();$('#loading').hidden=true;
+    new ResizeObserver(layoutModel).observe(host);layoutModel();pixi.render();
+    if(contextLost||gl.isContextLost())throw new Error('WebGL context lost');
+    $('#loading').hidden=true;
+    if(window.requestIdleCallback)window.requestIdleCallback(()=>void warmReplyResources(),{timeout:3000});
+    else setTimeout(()=>void warmReplyResources(),1000);
     tryPlayWelcome();
-  } catch(error) {console.error(error);$('#loading').innerHTML='<span class="error-symbol">◇</span><p>模型暂时没能到达</p><small>请检查资源加载后重试。你仍可以体验右侧对话。</small><button class="glass-button" id="retry">重新加载</button>';$('#retry').onclick=()=>location.reload();}
+  } catch(error) {console.error(error);pixi?.stop?.();showFailure(contextLost?'浏览器中断了模型渲染，请关闭其他网页后重新加载。对话仍可使用。':'模型资源加载失败，请检查网络后重试。对话仍可使用。');}
 }
 bgm.audio.addEventListener('playing',tryPlayWelcome);
 bgm.audio.addEventListener('volumechange',tryPlayWelcome);
-window.addEventListener('pagehide',()=>{speech.stop();bgm.pause();});
-window.addEventListener('pageshow',()=>bgm.start());
-if(import.meta.hot)import.meta.hot.dispose(()=>{idleEvents.abort();speech.stop();bgm.destroy();});
+window.addEventListener('pagehide',()=>{speech.stop();speech.cache.clear();bgm.pause();});
+const resumeSpeech=()=>{if((settings.voice||settings.bgm)&&document.visibilityState!=='hidden')speech.unlock();};
+document.addEventListener('pointerup',resumeSpeech,{capture:true,passive:true,signal:idleEvents.signal});
+document.addEventListener('keydown',resumeSpeech,{capture:true,signal:idleEvents.signal});
+document.addEventListener('visibilitychange',()=>{if(speech.context)resumeSpeech();},{signal:idleEvents.signal});
+window.addEventListener('pageshow',()=>{if(speech.context)resumeSpeech();bgm.start();});
+if(import.meta.hot)import.meta.hot.dispose(()=>{idleEvents.abort();speech.destroy();bgm.destroy();});
 syncSettings();syncAccessories();renderMessages();connectBackend();loadModel();bgm.start();

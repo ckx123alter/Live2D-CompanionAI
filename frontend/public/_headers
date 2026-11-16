@@ -1,0 +1,4 @@
+/audio/shared/*
+  Cache-Control: public, max-age=31536000, immutable
+/audio/shared-manifest.json
+  Cache-Control: no-cache

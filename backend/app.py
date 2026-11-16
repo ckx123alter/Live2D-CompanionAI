@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import traceback
+import time
 from urllib.parse import urlsplit
 from pydantic import SecretStr
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -11,7 +13,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .coordination import GuardError, lease
@@ -21,7 +23,8 @@ from .drawing_library import choose_drawing
 from .drawing_game import matches_answer, answer_reply, game_day, daily_limit_reply, resume_reply, confirms_guess, DAILY_LIMIT_TEXT
 from .providers import DoubaoSpeech, OpenAIChat, OpenAISpeech, ProviderError, load_system_prompt
 from .store import Store, DailyGameLimit
-from .speech_cache import CachedSpeech, WELCOME_TEXT
+from .speech_cache import CachedSpeech, WELCOME_TEXT, CACHED_PHRASES
+from .speech_stream import speech_events, audio_type
 from .quick_replies import quick_reply
 
 COOKIE = "whale_session"
@@ -60,6 +63,9 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
 
     @app.middleware("http")
     async def browser_boundary(request: Request, call_next):
+        started = time.perf_counter()
+        if hasattr(app.state.store, 'begin_request'):
+            app.state.store.begin_request()
         if settings.app_env == "production" and request.url.scheme != "https" and request.url.path != "/api/health":
             return JSONResponse({"detail": "本站仅接受 HTTPS，请检查可信反向代理配置。"}, status_code=400)
         if request.url.path.startswith("/api/"):
@@ -86,6 +92,8 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
             response = await call_next(request)
             response.headers["Cache-Control"] = "no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
+            metrics = getattr(app.state.store, 'request_metrics', {})
+            response.headers['Server-Timing'] = f"app;dur={(time.perf_counter()-started)*1000:.1f}, db;dur={metrics.get('ms',0):.1f};desc=\"{metrics.get('count',0)} queries\""
             if settings.app_env == "production":
                 response.headers["Strict-Transport-Security"] = "max-age=31536000"
             return response
@@ -125,11 +133,11 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
             charges.append(("session:" + key, 1, maximum))
         app.state.store.consume(charges, "snapshot" if snapshot else "request", 60)
 
-    def exclusive(key: str):
-        return lease(app.state.store, "request:" + key, timeout=settings.request_timeout, limit=settings.max_concurrent_requests)
+    def exclusive(key: str, *, wait_timeout=None):
+        return lease(app.state.store, "request:" + key, timeout=settings.request_timeout, limit=settings.max_concurrent_requests, wait_timeout=wait_timeout)
 
     def provider_settings(request, kind):
-        if settings.credential_mode == "server":
+        if settings.app_env == "local":
             return settings
         value = request.headers.get("x-llm-key" if kind == "llm" else "x-tts-key", "").strip()
         if not value:
@@ -155,6 +163,10 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
                 return await OpenAIChat(local, app.state.client).reply(history, text, **kwargs)
         except TimeoutError:
             raise ProviderError("对话服务超时，结果未能确认，请稍后再试。") from None
+        except ProviderError as error:
+            if error.retry_safe:
+                store.operation_status(operation, "failed")
+            raise
 
     def connect(response: Response):
         token = app.state.store.create_session()
@@ -169,7 +181,8 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
 
     @app.get("/api/config")
     def config():
-        return {"tts": settings.tts_mode, "credential_mode": settings.credential_mode, "tts_provider": settings.tts_provider, "password_required": bool(settings.app_password.get_secret_value())}
+        profile = hashlib.sha256(json.dumps(app.state.speech.identity, sort_keys=True).encode()).hexdigest()
+        return {"tts": settings.tts_mode, "app_env": settings.app_env, "tts_provider": settings.tts_provider, "request_timeout": settings.request_timeout, "shared_audio_profile": profile, "tts_stream": settings.tts_provider == "doubao", "password_required": bool(settings.app_password.get_secret_value())}
 
     @app.post("/api/login")
     async def login(data: LoginRequest, request: Request, response: Response):
@@ -402,16 +415,16 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     @app.post("/api/tts")
     async def tts(data: SpeechRequest, request: Request):
         key = session(request)
-        if settings.credential_mode == "server" and not settings.tts_enabled:
+        if settings.app_env == "local" and not settings.tts_enabled:
             raise HTTPException(503, "服务端 TTS 尚未配置。")
         budget(request, key)
-        async with exclusive("tts:" + key):
+        async with exclusive("tts:" + key, wait_timeout=0 if data.retry else 8):
             text = WELCOME_TEXT if data.preset == "welcome" else app.state.store.speech_text(key, data.message_id)
             if not text:
                 raise HTTPException(404, "这条回复不存在，请刷新会话。")
-            if settings.credential_mode == "byok" and not request.headers.get("x-tts-key", "").strip():
+            if settings.app_env == "production" and not request.headers.get("x-tts-key", "").strip():
                 audio = await app.state.speech.synthesize(text, message_id=data.message_id, shared_only=True)
-                return Response(audio, media_type="audio/mpeg") if audio is not None else Response(status_code=204)
+                return Response(audio, media_type=audio_type(audio)) if audio is not None else Response(status_code=204)
             def prepare_speech(cache_key):
                 local = provider_settings(request, "tts")
                 store = app.state.store
@@ -419,11 +432,46 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
                 secret = local.doubao_tts_api_key if local.tts_provider == "doubao" else local.tts_api_key
                 payer = store.key(secret.get_secret_value())
                 operation = "audio:" + cache_key + ":" + payer
-                store.reserve_usage(key, client_ip(request), payer, tts_chars=len(text), operation=operation, fingerprint=cache_key, allow_completed=True)
+                store.reserve_usage(key, client_ip(request), payer, tts_chars=len(text), operation=operation, fingerprint=cache_key, allow_completed=True, manual_retry=data.retry)
                 provider = DoubaoSpeech(local, app.state.client) if local.tts_provider == "doubao" else OpenAISpeech(local, app.state.client)
                 return provider, operation
-            audio = await app.state.speech.synthesize(text, message_id=data.message_id, prepare=prepare_speech)
-        return Response(audio, media_type="audio/mpeg")
+            audio = await app.state.speech.synthesize(text, message_id=data.message_id, prepare=prepare_speech, wait_timeout=0 if data.retry else 8)
+        return Response(audio, media_type=audio_type(audio))
+
+    @app.post("/api/tts/stream")
+    async def tts_stream(data: SpeechRequest, request: Request):
+        key = session(request)
+        budget(request, key)
+        if settings.tts_provider != 'doubao':
+            raise HTTPException(400, '当前语音服务不支持流式播放。')
+        if settings.app_env == 'local' and not settings.tts_enabled:
+            raise HTTPException(503, '服务端 TTS 尚未配置。')
+        text = WELCOME_TEXT if data.preset == 'welcome' else app.state.store.speech_text(key, data.message_id)
+        if not text:
+            raise HTTPException(404, '这条回复不存在，请刷新会话。')
+        shared_only = settings.app_env == 'production' and not request.headers.get('x-tts-key', '').strip()
+        def prepare_stream(cache_key):
+            local = provider_settings(request, 'tts')
+            store = app.state.store
+            payer = store.key(local.doubao_tts_api_key.get_secret_value())
+            operation = 'audio:' + cache_key + ':' + payer
+            store.reserve_usage(key, client_ip(request), payer, tts_chars=len(text), operation=operation,
+                                fingerprint=cache_key, allow_completed=True, manual_retry=data.retry)
+            return DoubaoSpeech(local, app.state.client), operation
+        async def events():
+            try:
+                async with exclusive('tts:' + key, wait_timeout=0 if data.retry else 8):
+                    async for event in speech_events(app.state.speech, text, data.message_id,
+                            prepare=prepare_stream, shared_only=shared_only, phrases=CACHED_PHRASES, lease=lease,
+                            wait_timeout=0 if data.retry else 8):
+                        yield json.dumps(event, ensure_ascii=False) + '\n'
+            except (ProviderError, GuardError) as error:
+                yield json.dumps({'type':'error','code':getattr(error, 'code', 'speech_provider_error'),'detail':str(error)}, ensure_ascii=False) + '\n'
+            except Exception as error:
+                # Record stack locations, not exception text or request headers containing credentials.
+                logging.getLogger(__name__).error('Speech processing failed (%s): %s', type(error).__name__, ''.join(traceback.format_tb(error.__traceback__)))
+                yield json.dumps({'type':'error','code':'speech_processing_failed','detail':'服务端语音处理失败，请稍后点击朗读重试。'}, ensure_ascii=False) + '\n'
+        return StreamingResponse(events(), media_type='application/x-ndjson', headers={'X-Accel-Buffering':'no'})
 
     # Unknown API paths must never return the frontend or files outside dist.
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

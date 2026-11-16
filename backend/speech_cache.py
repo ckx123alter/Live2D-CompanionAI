@@ -1,3 +1,4 @@
+from .speech_stream import speech_key
 import asyncio
 import hashlib
 import json
@@ -34,7 +35,7 @@ class CachedSpeech:
         # Keys are intentionally excluded: rotating credentials does not change audio.
         self.identity = identity
 
-    async def synthesize(self, text: str, message_id: int | None = None, *, prepare=None, shared_only=False) -> bytes | None:
+    async def synthesize(self, text: str, message_id: int | None = None, *, prepare=None, shared_only=False, wait_timeout=None) -> bytes | None:
         if text in CACHED_PHRASES:
             message_id = None
         elif shared_only:
@@ -50,21 +51,25 @@ class CachedSpeech:
         # Preserve the original fixed-phrase keys, including already generated audio.
         cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         cached = self.store.cached_speech(cache_key)
+        if cached is None and self.identity["provider"] == "doubao":
+            cached = self.store.cached_speech(speech_key(self.identity,text,message_id,pcm=True))
         if cached is not None or shared_only:
             return cached
         # Each caller waits on a database lease. Different workers re-check the
         # cache after acquiring it, so only the winner submits a paid request.
         if len(self.inflight) >= self.max_inflight:
             raise GuardError("语音合成繁忙，请稍后重试。")
-        task = asyncio.create_task(self._generate(cache_key, text, message_id, prepare))
+        task = asyncio.create_task(self._generate(cache_key, text, message_id, prepare, wait_timeout))
         task_id = str(id(task))
         self.inflight[task_id] = task
         task.add_done_callback(lambda done: self._finished(task_id, done))
         return await asyncio.shield(task)
 
-    async def _generate(self, cache_key, text, message_id, prepare):
-        async with lease(self.store, "audio:" + cache_key, timeout=self.settings.request_timeout, limit=self.max_inflight):
+    async def _generate(self, cache_key, text, message_id, prepare, wait_timeout=None):
+        async with lease(self.store, "audio:" + cache_key, timeout=self.settings.request_timeout, limit=self.max_inflight, wait_timeout=wait_timeout):
             cached = self.store.cached_speech(cache_key)
+            if cached is None and self.identity["provider"] == "doubao":
+                cached = self.store.cached_speech(speech_key(self.identity, text, message_id, pcm=True))
             if cached is not None:
                 return cached
             provider, operation = prepare(cache_key) if prepare else (self.provider, None)
@@ -73,6 +78,10 @@ class CachedSpeech:
                     audio = await provider.synthesize(text)
             except TimeoutError:
                 raise ProviderError("语音合成超时，结果未能确认，请稍后再试。") from None
+            except ProviderError as error:
+                if operation and error.retry_safe:
+                    self.store.operation_status(operation, "failed")
+                raise
             self.store.cache_speech(cache_key, audio, message_id)
             if operation:
                 self.store.operation_status(operation, "completed")
